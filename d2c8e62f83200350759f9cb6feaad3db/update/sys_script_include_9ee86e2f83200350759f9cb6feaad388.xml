@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>public</access>
+        <active>true</active>
+        <api_name>global.DocxUtil</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description>Utils zur Word-Templatierung</description>
+        <mobile_callable>false</mobile_callable>
+        <name>DocxUtil</name>
+        <sandbox_callable>false</sandbox_callable>
+        <script><![CDATA[var DocxUtil = Class.create();
+DocxUtil.prototype = (function() {
+    var bracket = '%';
+    var edge = bracket + 'ServiceNow' + bracket;
+    var keyRegex = '(' + edge + ')([a-z]+[a-z0-9 ]*)(' + edge + ')';
+
+    function IR(src) {
+        var self = this;
+
+        var textNodeRegex = "(<w:t[^>]*>)([^<]*)(</w:t>)";
+
+        self._local = src + '';
+        self.ranges = [];
+        self.dirty = true;
+        self.allText = "";
+        self.indexMap = [];
+        self.lastHit = -1;
+
+        function TextRange(string, begin, end) {
+            this.string = string || "";
+            this.start = begin || -1;
+            this.end = end || -1;
+        }
+
+        function rebuild() {
+            if (!self.dirty) return;
+            var now = new Date().getTime();
+            self.ranges = [];
+
+            var regex = new RegExp(textNodeRegex, 'gi');
+            var hit = null;
+            while ((hit = regex.exec(self._local)) != null) {
+                var start = hit.index + hit[1].length;
+                self.ranges.push(new TextRange(hit[2], start, start + hit[2].length));
+            }
+
+            var delta = new Date().getTime() - now;
+            self.allText = self.ranges.map(function(r) {
+                return r.string;
+            }).join('');
+            self.indexMap = self.ranges.reduce(function(out, range) {
+                for (var i = 0; i < range.string.length; i++) {
+                    out.push(range.start + i);
+                }
+                return out;
+            }, []);
+            self.dirty = false;
+            self.lastHit = -1;
+        }
+
+        function countMatches(text) {
+            var regex = new RegExp(text, 'gi');
+            var matches = 0;
+            var hit = null;
+            while ((hit = regex.exec(self.allText)) != null) {
+                matches++;
+            }
+            return matches;
+        }
+
+        function searchReplace(from, to) {
+            var hits = 0;
+            var startIdx;
+            while ((startIdx = self.allText.indexOf(from)) != -1) {
+                var lowest = self.indexMap[startIdx];
+                var highest = self.indexMap[startIdx + from.length - 1];
+                var newLocal = '';
+                // Multi Line Variable Support:
+                if (to.replaceXDOCText) {
+                    newLocal = to.replaceXDOCText(self._local, lowest, highest);
+                } else {
+                    newLocal = self._local.slice(0, lowest) + to + self._local.slice(highest + 1);
+                }
+                self._local = newLocal;
+                self.dirty = true;
+                hits++;
+                rebuild();
+            }
+            return self._local;
+        }
+
+        this.getXML = function() {
+            return self._local;
+        };
+
+        this.searchReplace = searchReplace;
+
+        rebuild();
+    }
+
+    function processDocxXML(xmlString, string_map, new_file_name, entry_name) {
+        var ir = new IR(xmlString);
+        for (var k in string_map) {
+            if (!string_map[k] && string_map[k] != "") {
+                string_map[k] = 'NoData(' + k + ')';
+            }
+            // Special case for termination dates
+            var tag = k.indexOf('XX.') > -1 ? k : '&lt;ServiceNow&gt;' + k + '&lt;/ServiceNow&gt;';
+            ir.searchReplace(tag, string_map[k]);
+        }
+        var newXML = ir.getXML();
+        return newXML.split(' & ').join(' &amp; ');
+    }
+
+
+    /**
+    	DocX will sometimes contain text arbitrarily split into multiple runs.
+    	This makes it very difficult or unfeasible to do quick text replacements.
+    	This function collapses text runs where possible.
+    */
+    function optimizeDocx(xmlString) {
+        xmlString = xmlString.split("&gt;").join(bracket);
+        xmlString = xmlString.split("&lt;/").join(bracket);
+        xmlString = xmlString.split("&lt;").join(bracket);
+        var tree = new XTree(xmlString);
+
+        function getRPR(rowNode) {
+            var rprs = rowNode.children.filter(function(node) {
+                return node.name == 'w:rPr';
+            });
+            return rprs[0];
+        }
+
+        function getText(rowNode) {
+            var texts = rowNode.children.filter(function(node) {
+                return node.name == 'w:t';
+            });
+            return texts[0];
+        }
+
+        function optimizeRuns(runs) {
+            if (runs.length == 0) return runs;
+            if (runs.length < 2) return runs;
+            // Early out of runs if they don't contain template keys
+            if (runs.join('').indexOf(bracket) == -1) return runs;
+
+            /*
+            The runs array contains a sequence of text runs contained in a single paragraph.
+            First we will break it down into sets of contiguous run candidates for folding...
+            */
+
+            var sets = [];
+            var currentSet = [];
+
+            function endSet() {
+                sets.push(currentSet);
+                currentSet = [];
+            }
+
+            function add(run) {
+                currentSet.push(run);
+            }
+
+            runs = runs.map(function(r) {
+                return {
+                    has_text: !!getText(r),
+                    has_tab: (r + '').indexOf('w:tab') > -1,
+                    run: r
+                }
+            }).forEach(function(currentRun) {
+                if (!currentRun.has_text) {
+                    endSet();
+                    add(currentRun.run);
+                    endSet();
+                } else {
+                    add(currentRun.run);
+                }
+            })
+            endSet();
+
+            // *sigh* go through every set and move text following tabs into the next set
+            sets = sets.reduce(function(list, currentSet) {
+                list.push(currentSet);
+                return list;
+            }, [])
+
+            function optimizeSet(set_of_runs) {
+                // remove empty nodes
+                set_of_runs = set_of_runs.filter(function(row) {
+                    var text = getText(row);
+                    if (!text || !text.innerText) return true;
+                    return !!text.innerText;
+                });
+
+                // fold relevant nodes with identical run properties
+                if (set_of_runs.length > 1) {
+                    var previousRun;
+                    var previousRPR;
+                    var previousTextNode;
+                    var lastWasIdentical = false;
+                    set_of_runs = set_of_runs.reduce(function(output, run) {
+
+                        var rPrNode = getRPR(run);
+                        var textNode = getText(run);
+
+                        if (previousTextNode) {
+                            // If previousTextNode is set, we are on node > 0
+                            var rprIsIdentical = (rPrNode + '') == previousRPR;
+
+                            if (rprIsIdentical && run.children.length <= 2) {
+                                // If the rpr is the same as the last time, add the current text to the previous text, and we don't keep the row
+                                previousTextNode.innerText += textNode.innerText;
+                                lastWasIdentical = true;
+                            } else {
+                                // If the rpr is not the same, add the previous row
+                                output.push(previousRun);
+                                // Set the current row as the previous row
+                                previousTextNode = textNode;
+                                previousRun = run;
+                                lastWasIdentical = false;
+                            }
+                        } else {
+                            // We always keep our first row
+                            previousRun = run;
+                            previousTextNode = textNode;
+                        }
+
+                        previousRPR = rPrNode + '';
+                        return output;
+                    }, []);
+
+                    //if (lastWasIdentical) {
+                    set_of_runs.push(previousRun);
+                    //}
+                }
+                return set_of_runs;
+
+            }
+
+            var out = sets.map(function(set) {
+                return optimizeSet(set);
+            }).reduce(function(output, processedRuns) {
+                return output.concat(processedRuns);
+            }, []).filter(function(r) {
+                return !!r;
+            });
+
+            return out;
+        }
+
+        function optimizeNode(node) {
+
+            var runBuffer = [];
+            node.children = node.children.reduce(function(prev, current, set) {
+                switch (current.name) {
+                    case "w:proofErr":
+                        // strip proofing errors
+                        break;
+                    case "w:r":
+                        runBuffer.push(current);
+                        break;
+                    default:
+                        prev.push(optimizeNode(current));
+                }
+                return prev;
+            }, []);
+
+            node.children = node.children.concat(optimizeRuns(runBuffer));
+
+            return node;
+        }
+
+        tree.root = optimizeNode(tree.root);
+
+        return tree;
+    }
+
+    return {
+        initialize: function() {},
+
+        replaceText: function(docx_attachment_id, new_file_name, target_table, target_sys_id) {
+            try {
+                var Zip = new ZipUtil();
+                // Unzip an attachment to a javascript object structure
+                var archive = Zip.unzip(docx_attachment_id);
+                // Look for the document.xml file and replace some text in it
+                archive.files = archive.files.map(function(file) {
+                    switch (file.file_name) {
+                        case 'word/header1.xml':
+                        case 'word/header2.xml':
+                        case 'word/footer1.xml':
+                        case 'word/footer2.xml':
+                        case 'word/document.xml':
+                            var xmlString = Zip.charArrayToString(file.file_data);
+                            //xmlString = processDocxXML(xmlString, string_map, new_file_name, file.file_name);
+                            file.file_data = Zip.stringToCharArray(xmlString);
+                            break;
+                        case "word/settings.xml":
+                            var xmlString = Zip.charArrayToString(file.file_data);
+                            file.file_data = Zip.stringToCharArray(xmlString);
+                            break;
+                        case "[Content_Types].xml":
+                            var xmlString = Zip.charArrayToString(file.file_data);
+                            xmlString = xmlString.replace('.template.main', '.document.main');
+                            file.file_data = Zip.stringToCharArray(xmlString);
+                            break;
+                        default:
+                    }
+                    return file;
+                });
+
+                // Turn the javascript object structure back into a zip file, attach it to a record on a table
+                var mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                if (target_table && target_sys_id && mime && new_file_name)
+                    return Zip.rezip(archive, new_file_name, target_table, target_sys_id, mime);
+                return Zip.rezipAsBytes(archive);
+
+            } catch (e) {
+                gs.error('DocX generation failed! ' + e + ":" + e.stack);
+                throw e;
+            }
+        },
+
+        /**
+         * Get the CRC32 for a given string
+         * @param {string} str 
+         */
+        crc32: function(str) {
+            var crc = 0 ^ (-1);
+            var crcTable = this.crcTable;
+
+            for (var i = 0; i < str.length; i++) {
+                crc = (crc >>> 8) ^ crcTable[(crc ^ str.charCodeAt(i)) & 0xFF];
+            }
+
+            return (crc ^ (-1)) >>> 0;
+        },
+
+        crcTable: function() {
+            var c;
+            var crcTable = [];
+            for (var n = 0; n < 256; n++) {
+                c = n;
+                for (var k = 0; k < 8; k++) {
+                    c = ((c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
+                }
+                crcTable[n] = c;
+            }
+            return crcTable;
+        },
+
+        type: 'DocxUtil'
+    };
+})();]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-05-05 19:00:25</sys_created_on>
+        <sys_id>9ee86e2f83200350759f9cb6feaad388</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>DocxUtil</sys_name>
+        <sys_package display_value="WordExport" source="d2c8e62f83200350759f9cb6feaad3db">d2c8e62f83200350759f9cb6feaad3db</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="WordExport">d2c8e62f83200350759f9cb6feaad3db</sys_scope>
+        <sys_update_name>sys_script_include_9ee86e2f83200350759f9cb6feaad388</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-05-05 19:00:25</sys_updated_on>
+    </sys_script_include>
+</record_update>

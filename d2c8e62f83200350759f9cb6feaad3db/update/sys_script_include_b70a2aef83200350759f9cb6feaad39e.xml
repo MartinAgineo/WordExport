@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>public</access>
+        <active>true</active>
+        <api_name>global.AgineoZipService</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <mobile_callable>false</mobile_callable>
+        <name>AgineoZipService</name>
+        <sandbox_callable>false</sandbox_callable>
+        <script><![CDATA[var AgineoZipService = Class.create();
+AgineoZipService.prototype = {
+ 
+
+ 
+    createZip: function(files, targetGR, zipNameOpt) {
+        try {
+            if (!files || typeof files !== 'object') {
+                gs.error('[AgineoZipService] files invalid');
+                return;
+            }
+            if (!targetGR || !targetGR.isValidRecord()) {
+                gs.error('[AgineoZipService] targetGR invalid');
+                return;
+            }
+
+            // Build ZIP in memory (Global scope: Packages.* allowed)
+            var baos = new Packages.java.io.ByteArrayOutputStream();
+            var zos = new Packages.java.util.zip.ZipOutputStream(baos);
+
+            var fileCount = 0;
+
+            for (var path in files) {
+                if (!files.hasOwnProperty(path)) continue;
+
+                var content = (files[path] + '');
+
+                var entry = new Packages.java.util.zip.ZipEntry(path);
+                zos.putNextEntry(entry);
+
+                var bytes = new Packages.java.lang.String(content).getBytes('UTF-8');
+                zos.write(bytes, 0, bytes.length);
+                zos.closeEntry();
+
+                fileCount++;
+            }
+
+            zos.close();
+
+            if (fileCount === 0) {
+                gs.warn('[AgineoZipService] No files to zip');
+                return;
+            }
+
+            var zipName = zipNameOpt || ('Validated_Expenses_' + gs.generateGUID() + '.zip');
+            var zipBytes = baos.toByteArray();
+
+            new GlideSysAttachment().write(
+                targetGR,
+                zipName,
+                'application/zip',
+                zipBytes
+            );
+
+            gs.info('[AgineoZipService] ZIP created: ' + zipName + ' | files=' + fileCount +
+                ' | attached_to=' + targetGR.getTableName() + ':' + targetGR.getUniqueValue());
+
+        } catch (e) {
+            gs.error('[AgineoZipService] ERROR: ' + e);
+            if (e && e.stack) gs.error(e.stack);
+            throw e;
+        }
+    },
+
+    type: 'AgineoZipService'
+};]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-05-05 19:05:26</sys_created_on>
+        <sys_id>b70a2aef83200350759f9cb6feaad39e</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>AgineoZipService</sys_name>
+        <sys_package display_value="WordExport" source="d2c8e62f83200350759f9cb6feaad3db">d2c8e62f83200350759f9cb6feaad3db</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="WordExport">d2c8e62f83200350759f9cb6feaad3db</sys_scope>
+        <sys_update_name>sys_script_include_b70a2aef83200350759f9cb6feaad39e</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-05-05 19:05:26</sys_updated_on>
+    </sys_script_include>
+</record_update>
