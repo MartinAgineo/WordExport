@@ -118,6 +118,13 @@ DocxUtil.prototype = (function() {
         var format = [];
         var text = "";
 		var ersetzung = "";
+		// // Da es gerade nicht richtig funktioniert:
+		// // ==> 
+		// ersetzung += '<w:p w14:paraId="00000000" w14:textId="00000000" w:rsidR="00000000" w:rsidRPr="00000000" w:rsidRDefault="00000000" w:rsidP="00000000"><w:pPr><w:pStyle w:val="berschrift1"/></w:pPr><w:r><w:t>';
+		// ersetzung += "UEBERSCHFIRT AUS SCRIPT";
+		// ersetzung += '</w:t></w:r></w:p>';
+		// // <==
+
         var newlinehandeled = true;
         while (true) {
             var tag = parseTag(html, index);
@@ -159,7 +166,7 @@ DocxUtil.prototype = (function() {
         initialize: function() {},
 
         replaceText: function(target_sys_id) {
-            var docx_attachment_id = "a66fff7783e84710916cf3a6feaad3d0";
+            var docx_attachment_id = "fbbcde4883bc8710916cf3a6feaad3e7";
             var new_file_name = "ARTIKEL.docx";
             var target_table = "kb_template_how_to";
             var xmlString = null;
@@ -240,13 +247,13 @@ DocxUtil.prototype = (function() {
         <sys_created_by>admin</sys_created_by>
         <sys_created_on>2026-05-05 19:00:25</sys_created_on>
         <sys_id>9ee86e2f83200350759f9cb6feaad388</sys_id>
-        <sys_mod_count>19</sys_mod_count>
+        <sys_mod_count>31</sys_mod_count>
         <sys_name>DocxUtil</sys_name>
         <sys_package display_value="WordExport" source="d2c8e62f83200350759f9cb6feaad3db">d2c8e62f83200350759f9cb6feaad3db</sys_package>
         <sys_policy/>
         <sys_scope display_value="WordExport">d2c8e62f83200350759f9cb6feaad3db</sys_scope>
         <sys_update_name>sys_script_include_9ee86e2f83200350759f9cb6feaad388</sys_update_name>
         <sys_updated_by>admin</sys_updated_by>
-        <sys_updated_on>2026-05-06 20:07:59</sys_updated_on>
+        <sys_updated_on>2026-05-07 07:24:41</sys_updated_on>
     </sys_script_include>
 </record_update>
